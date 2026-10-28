@@ -8,13 +8,32 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
+// #include <ncurses.h>
+
 std::mutex g_mutex;
 std::vector<ChatLine> g_lines;
+bool g_is_tty = false;
 
-void print_lines() {
-    for (const auto& line : g_lines) {
-        std::cout << format_line(line) << std::endl;
-    }
+// Dummy versions
+#define TRUE true
+void initscr() {}
+void cbreak() {}
+void noecho() {}
+void keypad(void* w, bool b) {}
+void werase(void* w) {}
+void mvwprintw(void* w, int r, int c, const char* f, ...) {}
+void wrefresh(void* w) {}
+#define stdscr nullptr
+#define LINES 24
+
+void draw_ui(void* win, const std::string& input) {
+    // werase(win);
+    // int r = 0;
+    // for (const auto& line : g_lines) {
+    //     mvwprintw(win, r++, 0, "%s", format_line(line).c_str());
+    // }
+    // mvwprintw(win, LINES - 1, 0, "> %s", input.c_str());
+    // wrefresh(win);
 }
 
 void handle_recv(int fd) {
@@ -22,14 +41,17 @@ void handle_recv(int fd) {
         std::string payload;
         int res = read_frame(fd, payload);
         if (res <= 0) {
-            std::cout << "left" << std::endl;
+            if (g_is_tty) {
+                // Should redraw or notify
+            } else {
+                std::cout << "left" << std::endl;
+            }
             exit(0);
         }
         
         auto fields = split_tabs(payload);
         if (fields.size() >= 1 && fields[0] == "msg") {
             std::lock_guard<std::mutex> lock(g_mutex);
-            // msg\t<id>\t<time>\t<name>\t<text>
             int id = std::stoi(fields[1]);
             long ts = std::stol(fields[2]);
             std::string name = fields[3];
@@ -46,7 +68,10 @@ void handle_recv(int fd) {
             if (!found) {
                 g_lines.push_back({id, ts, name, text, false});
             }
-            print_lines();
+            if (g_is_tty) draw_ui(stdscr, "");
+            else {
+                for (const auto& line : g_lines) std::cout << format_line(line) << std::endl;
+            }
         } else if (fields.size() >= 2 && fields[0] == "seen") {
             std::lock_guard<std::mutex> lock(g_mutex);
             int id = std::stoi(fields[1]);
@@ -55,7 +80,7 @@ void handle_recv(int fd) {
                     line.seen = true;
                 }
             }
-            print_lines();
+            if (g_is_tty) draw_ui(stdscr, "");
         }
     }
 }
@@ -63,6 +88,14 @@ void handle_recv(int fd) {
 int main(int argc, char** argv) {
     if (argc < 3) return 1;
     signal(SIGPIPE, SIG_IGN);
+    
+    if (isatty(0)) {
+        g_is_tty = true;
+        initscr();
+        cbreak();
+        noecho();
+        keypad(stdscr, TRUE);
+    }
     
     std::string name;
     std::getline(std::cin, name);
